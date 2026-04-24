@@ -25,7 +25,7 @@ jobs:
 
     steps:
       - name: Checkout builder repository
-        uses: actions/checkout@v5
+        uses: actions/checkout@v6
 
       - name: Show builder repository contents
         shell: bash
@@ -108,7 +108,7 @@ jobs:
           grep -n "Device/totolink_X30" target/linux/mediatek/image/filogic.mk
           grep -n "TARGET_DEVICES += totolink_X30" target/linux/mediatek/image/filogic.mk
 
-          echo "Files changed relative to OpenWrt branch:"
+          echo "Source tree status:"
           git status --short
           git log -1 --oneline
 
@@ -130,7 +130,6 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-
           ./scripts/feeds update -a
           ./scripts/feeds install -a
 
@@ -149,10 +148,12 @@ jobs:
           make defconfig
 
           echo "Resolved target/device/package config:"
-          grep -E 'CONFIG_TARGET_mediatek|CONFIG_TARGET_DEVICE_mediatek_filogic_DEVICE_totolink_X30|CONFIG_PACKAGE_luci|CONFIG_BUILD_LOG' .config || true
+          grep -E 'CONFIG_TARGET_mediatek|CONFIG_TARGET_mediatek_filogic_DEVICE_totolink_X30|CONFIG_PACKAGE_luci|CONFIG_BUILD_LOG' .config || true
 
-          if ! grep -q '^CONFIG_TARGET_DEVICE_mediatek_filogic_DEVICE_totolink_X30=y' .config; then
+          if ! grep -q '^CONFIG_TARGET_mediatek_filogic_DEVICE_totolink_X30=y' .config; then
             echo "ERROR: X30 target device was not selected after make defconfig."
+            echo "Matching X30-related config lines:"
+            grep -Ei 'x30|totolink' .config || true
             exit 1
           fi
 
@@ -168,7 +169,6 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-
           make download -j"$(nproc)"
 
       - name: Build firmware
@@ -218,7 +218,6 @@ jobs:
 
           if [ ! -s ../x30-artifact-list.txt ]; then
             echo "ERROR: No X30/TOTOLINK firmware artifacts found."
-            echo "This means the build completed, but no output filename matched x30/totolink."
             echo "Full target directory contents were:"
             find "${TARGET_DIR}" -maxdepth 2 -type f -printf '%p\n' | sort
             exit 1
@@ -254,7 +253,7 @@ jobs:
 
       - name: Upload diagnostics on failure
         if: failure()
-        uses: actions/upload-artifact@v6
+        uses: actions/upload-artifact@v7
         with:
           name: failed-build-diagnostics
           path: |
@@ -269,7 +268,7 @@ jobs:
 
       - name: Upload workflow artifact
         if: steps.prep.outputs.skip_build != 'true'
-        uses: actions/upload-artifact@v6
+        uses: actions/upload-artifact@v7
         with:
           name: openwrt-totolink-x30-25.12
           path: out/*
@@ -296,6 +295,6 @@ jobs:
           Device profile: totolink_X30
 
           Routine upgrades should use only:
-          openwrt-mediatek-filogic-*x30*-squashfs-sysupgrade.bin
+          the TOTOLINK X30 squashfs sysupgrade image.
 
           Do not flash preloader.bin or bl31-uboot.fip for routine upgrades."

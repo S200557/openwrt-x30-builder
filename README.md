@@ -1,2 +1,19 @@
-# openwrt-x30-builder
-Automated OpenWrt stable-branch builds for the TOTOLINK X30 / MediaTek Filogic target using pinned X30 board-support patches.
+# OpenWrt X30 Builder
+
+Automated OpenWrt builds for the **TOTOLINK X30** router on the MediaTek Filogic target.
+
+This repository builds a custom OpenWrt image for the X30 by combining:
+
+- the official OpenWrt stable branch
+- a pinned TOTOLINK X30 board-support patch
+- a reproducible GitHub Actions workflow
+- a minimal device-specific OpenWrt configuration
+
+The goal is to produce updateable `sysupgrade.bin` images without manually compiling OpenWrt on a local machine.
+
+## Target device
+
+Device:
+
+```text
+TOTOLINK X30

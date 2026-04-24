@@ -46,7 +46,14 @@ jobs:
 
       - name: Clone OpenWrt stable branch
         run: |
-          git clone --depth 1 --branch "${OPENWRT_REF}" https://github.com/openwrt/openwrt.git openwrt
+          git clone \
+            --branch "${OPENWRT_REF}" \
+            --single-branch \
+            https://github.com/openwrt/openwrt.git openwrt
+
+          cd openwrt
+          git log -1 --oneline
+          git branch --show-current
 
       - name: Restore OpenWrt download cache
         uses: actions/cache@v4

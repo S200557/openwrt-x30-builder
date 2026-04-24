@@ -1,0 +1,774 @@
+From 1e4bed859aeb3c7047ee602866d833efed853e2d Mon Sep 17 00:00:00 2001
+From: sing <wx9745@gmail.com>
+Date: Sat, 6 Dec 2025 11:51:27 +0800
+Subject: [PATCH] mediatek: add TOTOLINK X30 support
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+Hardware specification:
+  SoC: MediaTek MT7981B 2x A53
+  Flash: 128 MB SPI-NAND
+  RAM: 256MB
+  Ethernet: 5x 10/100/1000 Mbps
+  Switch: MediaTek MT7531AE
+  WiFi: MediaTek MT7976C
+  Button: Reset, Mesh
+  Power: DC 12V 1A
+
+Flash Installation (UART)：
+  1. Connect to your PC via the Gigabit port of the router,
+     set a static ip on the ethernet interface of your PC.
+     (ip 192.168.1.254, gateway 192.168.1.1)
+  2. Attach UART, pause at u-boot menu.
+  3. Select <Upgrade ATF FIP>, then use openwrt-mediatek-filogic-totolink_X30-bl31-uboot.fip
+  4. Restart the system, pause at u-boot menu.
+  5. Select <Load production system via TFTP then write to NAND>, then use openwrt-mediatek-filogic-totolink_X30-squashfs-sysupgrade.bin ,
+ waiting for tftp recovery to complete, and input Enter.
+
+Signed-off-by: sing <wx9745@gmail.com>
+---
+ package/boot/uboot-mediatek/Makefile          |  13 +
+ .../patches/510-add-totolink-X30.patch        | 355 ++++++++++++++++++
+ .../mediatek/dts/mt7981b-totolink-X30.dts     | 303 +++++++++++++++
+ target/linux/mediatek/image/filogic.mk        |  24 ++
+ 4 files changed, 695 insertions(+)
+ create mode 100644 package/boot/uboot-mediatek/patches/510-add-totolink-X30.patch
+ create mode 100644 target/linux/mediatek/dts/mt7981b-totolink-X30.dts
+
+diff --git a/package/boot/uboot-mediatek/Makefile b/package/boot/uboot-mediatek/Makefile
+index 2431d4fd9604eb..4f368de236f6ee 100644
+--- a/package/boot/uboot-mediatek/Makefile
++++ b/package/boot/uboot-mediatek/Makefile
+@@ -434,6 +434,18 @@ define U-Boot/mt7981_nokia_ea0326gmp
+   DEPENDS:=+trusted-firmware-a-mt7981-spim-nand-ddr3
+ endef
+ 
++define U-Boot/mt7981_totolink_X30
++  NAME:=TOTOLINK X30
++  BUILD_SUBTARGET:=filogic
++  BUILD_DEVICES:=totolink_X30
++  UBOOT_CONFIG:=mt7981_totolink_X30
++  UBOOT_IMAGE:=u-boot.fip
++  BL2_BOOTDEV:=spim-nand
++  BL2_SOC:=mt7981
++  BL2_DDRTYPE:=ddr3
++  DEPENDS:=+trusted-firmware-a-mt7981-spim-nand-ddr3
++endef
++
+ define U-Boot/mt7981_openwrt_one-snand
+   NAME:=OpenWrt One NAND
+   BUILD_SUBTARGET:=filogic
+@@ -1114,6 +1126,7 @@ UBOOT_TARGETS := \
+ 	mt7981_snr_snr-cpe-ax2 \
+ 	mt7981_xiaomi_mi-router-ax3000t \
+ 	mt7981_xiaomi_mi-router-wr30u \
++	mt7981_totolink_X30 \
+ 	mt7986_acer_predator-w6x \
+ 	mt7986_bananapi_bpi-r3-emmc \
+ 	mt7986_bananapi_bpi-r3-sdmmc \
+diff --git a/package/boot/uboot-mediatek/patches/510-add-totolink-X30.patch b/package/boot/uboot-mediatek/patches/510-add-totolink-X30.patch
+new file mode 100644
+index 00000000000000..0dce69d0038fa5
+--- /dev/null
++++ b/package/boot/uboot-mediatek/patches/510-add-totolink-X30.patch
+@@ -0,0 +1,355 @@
++Index: u-boot-2025.10/arch/arm/dts/mt7981_totolink_X30.dts
++===================================================================
++--- /dev/null
+++++ u-boot-2025.10/arch/arm/dts/mt7981_totolink_X30.dts
++@@ -0,0 +1,175 @@
+++// SPDX-License-Identifier: GPL-2.0-or-later
+++
+++/dts-v1/;
+++#include "mt7981.dtsi"
+++#include <dt-bindings/gpio/gpio.h>
+++#include <dt-bindings/input/linux-event-codes.h>
+++
+++/ {
+++	#address-cells = <1>;
+++	#size-cells = <1>;
+++	model = "TOTOLINK X30";
+++	compatible = "mediatek,mt7981", "mediatek,mt7981-rfb";
+++	
+++	chosen {
+++		stdout-path = &uart0;
+++		tick-timer = &timer0;
+++	};
+++
+++	memory@40000000 {
+++		device_type = "memory";
+++		reg = <0x40000000 0x10000000>;
+++	};
+++
+++	gpio-keys {
+++		compatible = "gpio-keys";
+++
+++		reset {
+++			label = "reset";
+++			gpios = <&pio 1 GPIO_ACTIVE_LOW>;
+++			linux,code = <KEY_RESTART>;
+++		};
+++
+++		wps {
+++			label = "wps";
+++			gpios = <&pio 0 GPIO_ACTIVE_LOW>;
+++			inux,code = <KEY_WPS_BUTTON>;
+++		};
+++	};
+++
+++	gpio-leds {
+++		compatible = "gpio-leds";
+++
+++		sys_blue {
+++			label = "sys:blue";
+++			gpios = <&pio 15 GPIO_ACTIVE_LOW>;
+++		};
+++
+++		wan {
+++			label = "wan";
+++			gpios = <&pio 8 GPIO_ACTIVE_LOW>;
+++		};
+++		
+++		wlan2 {
+++			label = "wlan2";
+++			gpios = <&pio 35 GPIO_ACTIVE_LOW>;
+++		};
+++
+++		wlan5 {
+++			label = "wlan5";
+++			gpios = <&pio 34 GPIO_ACTIVE_LOW>;
+++		};
+++		
+++		usb {
+++			label = "usb";
+++			gpios = <&pio 5 GPIO_ACTIVE_LOW>;
+++		};
+++
+++		mesh_red {
+++			label = "mesh:red";
+++			gpios = <&pio 12 GPIO_ACTIVE_HIGH>;
+++		};
+++		
+++		mesh_blue {
+++			label = "mesh:blue";
+++			gpios = <&pio 4 GPIO_ACTIVE_LOW>;
+++		};
+++	};
+++};
+++
+++&eth {
+++	status = "okay";
+++	mediatek,gmac-id = <0>;
+++	phy-mode = "2500base-x";
+++	mediatek,switch = "mt7531";
+++	reset-gpios = <&pio 39 GPIO_ACTIVE_HIGH>;
+++
+++	fixed-link {
+++		speed = <2500>;
+++		full-duplex;
+++	};
+++};
+++
+++&pio {
+++	spi_flash_pins: spi0-pins-func-1 {
+++		mux {
+++			function = "flash";
+++			groups = "spi0", "spi0_wp_hold";
+++		};
+++
+++		conf-pu {
+++			pins = "SPI0_CS", "SPI0_HOLD", "SPI0_WP";
+++			drive-strength = <MTK_DRIVE_8mA>;
+++			bias-pull-up = <MTK_PUPD_SET_R1R0_00>;
+++		};
+++
+++		conf-pd {
+++			pins = "SPI0_CLK", "SPI0_MOSI", "SPI0_MISO";
+++			drive-strength = <MTK_DRIVE_8mA>;
+++			bias-pull-down = <MTK_PUPD_SET_R1R0_00>;
+++		};
+++	};
+++};
+++
+++&spi0 {
+++	#address-cells = <1>;
+++	#size-cells = <0>;
+++	pinctrl-names = "default";
+++	pinctrl-0 = <&spi_flash_pins>;
+++	status = "okay";
+++	must_tx;
+++	enhance_timing;
+++	dma_ext;
+++	ipm_design;
+++	support_quad;
+++	tick_dly = <2>;
+++	sample_sel = <0>;
+++
+++	spi_nand@0 {
+++		compatible = "spi-nand";
+++		reg = <0>;
+++		spi-max-frequency = <52000000>;
+++
+++		partitions {
+++			compatible = "fixed-partitions";
+++			#address-cells = <1>;
+++			#size-cells = <1>;
+++
+++			partition@0 {
+++				label = "bl2";
+++				reg = <0x00000 0x0100000>;
+++			};
+++
+++			partition@100000 {
+++				label = "u-boot-env";
+++				reg = <0x0100000 0x0080000>;
+++			};
+++
+++			partition@180000 {
+++				label = "factory";
+++				reg = <0x180000 0x0200000>;
+++			};
+++
+++			partition@380000 {
+++				label = "fip";
+++				reg = <0x380000 0x0200000>;
+++			};
+++
+++			partition@580000 {
+++				label = "ubi";
+++				reg = <0x580000 0x7a80000>;
+++				compatible = "linux,ubi";
+++			};
+++		};
+++	};
+++};
+++
+++&uart0 {
+++	mediatek,force-highspeed;
+++	status = "okay";
+++};
+++
+++&watchdog {
+++	status = "disabled";
+++};
+++
++Index: u-boot-2025.10/configs/mt7981_totolink_X30_defconfig
++===================================================================
++--- /dev/null
+++++ u-boot-2025.10/configs/mt7981_totolink_X30_defconfig
++@@ -0,0 +1,109 @@
+++CONFIG_ARM=y
+++CONFIG_SYS_HAS_NONCACHED_MEMORY=y
+++CONFIG_POSITION_INDEPENDENT=y
+++CONFIG_ARCH_MEDIATEK=y
+++CONFIG_TEXT_BASE=0x41e00000
+++CONFIG_SYS_MALLOC_F_LEN=0x4000
+++CONFIG_NR_DRAM_BANKS=1
+++CONFIG_DEFAULT_DEVICE_TREE="mt7981_totolink_X30"
+++CONFIG_OF_LIBFDT_OVERLAY=y
+++CONFIG_TARGET_MT7981=y
+++CONFIG_SYS_LOAD_ADDR=0x46000000
+++CONFIG_PRE_CON_BUF_ADDR=0x4007EF00
+++CONFIG_DEBUG_UART_BASE=0x11002000
+++CONFIG_DEBUG_UART_CLOCK=40000000
+++CONFIG_DEBUG_UART=y
+++CONFIG_FIT=y
+++CONFIG_BOOTDELAY=30
+++CONFIG_AUTOBOOT_KEYED=y
+++CONFIG_AUTOBOOT_MENU_SHOW=y
+++CONFIG_DEFAULT_FDT_FILE="mediatek/mt7981_totolink_X30.dtb"
+++CONFIG_LOGLEVEL=7
+++CONFIG_PRE_CONSOLE_BUFFER=y
+++CONFIG_LOG=y
+++# CONFIG_BOARD_INIT is not set
+++CONFIG_BOARD_LATE_INIT=y
+++CONFIG_HUSH_PARSER=y
+++CONFIG_SYS_PROMPT="MT7981> "
+++CONFIG_CMD_CPU=y
+++CONFIG_CMD_LICENSE=y
+++CONFIG_CMD_BOOTMENU=y
+++CONFIG_CMD_ASKENV=y
+++CONFIG_CMD_ERASEENV=y
+++CONFIG_CMD_ENV_FLAGS=y
+++CONFIG_CMD_STRINGS=y
+++CONFIG_CMD_DM=y
+++CONFIG_CMD_GPIO=y
+++CONFIG_CMD_GPT=y
+++CONFIG_CMD_MTD=y
+++CONFIG_CMD_PART=y
+++CONFIG_CMD_TFTPSRV=y
+++CONFIG_CMD_RARP=y
+++CONFIG_CMD_CDP=y
+++CONFIG_CMD_SNTP=y
+++CONFIG_CMD_LINK_LOCAL=y
+++CONFIG_CMD_DHCP=y
+++CONFIG_CMD_DNS=y
+++CONFIG_CMD_PING=y
+++CONFIG_CMD_PXE=y
+++CONFIG_CMD_CACHE=y
+++CONFIG_CMD_PSTORE=y
+++CONFIG_CMD_PSTORE_MEM_ADDR=0x42ff0000
+++CONFIG_CMD_UUID=y
+++CONFIG_CMD_HASH=y
+++CONFIG_CMD_SMC=y
+++CONFIG_CMD_UBI=y
+++CONFIG_CMD_UBI_RENAME=y
+++CONFIG_OF_EMBED=y
+++CONFIG_ENV_OVERWRITE=y
+++CONFIG_ENV_IS_IN_UBI=y
+++CONFIG_ENV_REDUNDANT=y
+++CONFIG_ENV_UBI_PART="ubi"
+++CONFIG_ENV_UBI_VOLUME="ubootenv"
+++CONFIG_ENV_UBI_VOLUME_REDUND="ubootenv2"
+++CONFIG_ENV_RELOC_GD_ENV_ADDR=y
+++CONFIG_ENV_USE_DEFAULT_ENV_TEXT_FILE=y
+++CONFIG_ENV_DEFAULT_ENV_TEXT_FILE="defenvs/totolink_X30_env"
+++CONFIG_ENV_VARS_UBOOT_RUNTIME_CONFIG=y
+++CONFIG_VERSION_VARIABLE=y
+++CONFIG_NETCONSOLE=y
+++CONFIG_USE_IPADDR=y
+++CONFIG_IPADDR="192.168.1.1"
+++CONFIG_USE_SERVERIP=y
+++CONFIG_SERVERIP="192.168.1.254"
+++CONFIG_NET_RANDOM_ETHADDR=y
+++CONFIG_REGMAP=y
+++CONFIG_SYSCON=y
+++CONFIG_BUTTON=y
+++CONFIG_BUTTON_GPIO=y
+++CONFIG_CLK=y
+++CONFIG_GPIO_HOG=y
+++CONFIG_LED=y
+++CONFIG_LED_BLINK=y
+++CONFIG_LED_GPIO=y
+++# CONFIG_MMC is not set
+++CONFIG_MTD=y
+++CONFIG_DM_MTD=y
+++CONFIG_MTD_SPI_NAND=y
+++CONFIG_MTD_UBI_FASTMAP=y
+++CONFIG_PHY_FIXED=y
+++CONFIG_MEDIATEK_ETH=y
+++CONFIG_PHY=y
+++CONFIG_PINCTRL=y
+++CONFIG_PINCONF=y
+++CONFIG_PINCTRL_MT7981=y
+++CONFIG_POWER_DOMAIN=y
+++CONFIG_MTK_POWER_DOMAIN=y
+++CONFIG_DM_REGULATOR=y
+++CONFIG_DM_REGULATOR_FIXED=y
+++CONFIG_DM_REGULATOR_GPIO=y
+++CONFIG_RAM=y
+++CONFIG_DM_SERIAL=y
+++CONFIG_SERIAL_RX_BUFFER=y
+++CONFIG_MTK_SERIAL=y
+++CONFIG_SPI=y
+++CONFIG_DM_SPI=y
+++CONFIG_MTK_SPIM=y
+++CONFIG_ZSTD=y
+++CONFIG_HEXDUMP=y
+++
++Index: u-boot-2025.10/defenvs/totolink_X30_env
++===================================================================
++--- /dev/null
+++++ u-boot-2025.10/defenvs/totolink_X30_env
++@@ -0,0 +1,55 @@
+++ipaddr=192.168.1.1
+++serverip=192.168.1.254
+++loadaddr=0x46000000
+++console=earlycon=uart8250,mmio32,0x11002000 console=ttyS0
+++bootargs=root=/dev/fit0 rootwait
+++bootcmd=if pstore check ; then run boot_recovery ; else run boot_ubi ; fi
+++bootconf=config-1
+++bootdelay=0
+++bootfile=openwrt-mediatek-filogic-totolink_X30-initramfs-recovery.bin
+++bootfile_bl2=openwrt-mediatek-filogic-totolink_X30-preloader.bin
+++bootfile_fip=openwrt-mediatek-filogic-totolink_X30-bl31-uboot.fip
+++bootfile_upg=openwrt-mediatek-filogic-totolink_X30-squashfs-sysupgrade.bin
+++bootled_pwr=sys:blue
+++bootled_rec=sys:blue
+++bootmenu_confirm_return=askenv - Press ENTER to return to menu ; bootmenu 60
+++bootmenu_default=2
+++bootmenu_delay=0
+++bootmenu_title=      [0;34m( ( ( [1;39mOpenWrt[0;34m ) ) )
+++bootmenu_0=Initialize environment.=run _firstboot
+++bootmenu_0d=Run default boot command.=run boot_default
+++bootmenu_1=Boot system via TFTP.=run boot_tftp ; run bootmenu_confirm_return
+++bootmenu_2=Boot production system from NAND.=run boot_production ; run bootmenu_confirm_return
+++bootmenu_3=Boot recovery system from NAND.=run boot_recovery ; run bootmenu_confirm_return
+++bootmenu_4=Load production system via TFTP then write to NAND.=setenv noboot 1 ; setenv replacevol 1 ; run boot_tftp_production ; setenv noboot ; setenv replacevol ; run bootmenu_confirm_return
+++bootmenu_5=Load recovery system via TFTP then write to NAND.=setenv noboot 1 ; setenv replacevol 1 ; run boot_tftp_recovery ; setenv noboot ; setenv replacevol ; run bootmenu_confirm_return
+++bootmenu_6=[31mLoad BL31+U-Boot FIP via TFTP then write to NAND.[0m=run boot_tftp_write_fip ; run bootmenu_confirm_return
+++bootmenu_7=[31mLoad BL2 preloader via TFTP then write to NAND.[0m=run boot_tftp_write_bl2 ; run bootmenu_confirm_return
+++bootmenu_8=Reboot.=reset
+++bootmenu_9=Reset all settings to factory defaults.=run reset_factory ; reset
+++boot_first=if button reset ; then led $bootled_rec on ; run boot_tftp_recovery ; setenv flag_recover 1 ; run boot_default ; fi ; bootmenu
+++boot_default=if env exists flag_recover ; then else run bootcmd ; fi ; run boot_recovery ; setenv replacevol 1 ; run boot_tftp_forever
+++boot_production=led $bootled_pwr on ; run ubi_read_production && bootm $loadaddr#$bootconf ; led $bootled_pwr off
+++boot_recovery=led $bootled_rec on ; run ubi_read_recovery && bootm $loadaddr#$bootconf ; led $bootled_rec off
+++boot_ubi=run boot_production ; run boot_recovery ; run boot_tftp_forever
+++boot_tftp_forever=led $bootled_rec on ; while true ; do run boot_tftp_recovery ; sleep 1 ; done
+++boot_tftp_production=tftpboot $loadaddr $bootfile_upg && env exists replacevol && iminfo $loadaddr && run ubi_write_production ; if env exists noboot ; then else bootm $loadaddr#$bootconf ; fi
+++boot_tftp_recovery=tftpboot $loadaddr $bootfile && env exists replacevol && iminfo $loadaddr && run ubi_write_recovery ; if env exists noboot ; then else bootm $loadaddr#$bootconf ; fi
+++boot_tftp=tftpboot $loadaddr $bootfile && bootm $loadaddr#$bootconf
+++boot_tftp_write_fip=tftpboot $loadaddr $bootfile_fip && run mtd_write_fip && run reset_factory
+++boot_tftp_write_bl2=tftpboot $loadaddr $bootfile_bl2 && run mtd_write_bl2
+++reset_factory=ubi part ubi ; mw $loadaddr 0x0 0x800 ; ubi write $loadaddr ubootenv 0x800 ; ubi write $loadaddr ubootenv2 0x800
+++mtd_write_fip=mtd erase fip && mtd write fip $loadaddr
+++mtd_write_bl2=mtd erase bl2 && mtd write bl2 $loadaddr
+++ubi_create_env=ubi check ubootenv || ubi create ubootenv 0x100000 dynamic || run ubi_format ; ubi check ubootenv2 || ubi create ubootenv2 0x100000 dynamic || run ubi_format
+++ubi_format=ubi detach ; mtd erase ubi && ubi part ubi ; reset
+++ubi_prepare_rootfs=if ubi check rootfs_data ; then else if env exists rootfs_data_max ; then ubi create rootfs_data $rootfs_data_max dynamic || ubi create rootfs_data - dynamic ; else ubi create rootfs_data - dynamic ; fi ; fi
+++ubi_read_production=ubi read $loadaddr fit && iminfo $loadaddr && run ubi_prepare_rootfs
+++ubi_read_recovery=ubi check recovery && ubi read $loadaddr recovery
+++ubi_remove_rootfs=ubi check rootfs_data && ubi remove rootfs_data
+++ubi_write_production=ubi check fit && ubi remove fit ; run ubi_remove_rootfs ; ubi create fit $filesize dynamic && ubi write $loadaddr fit $filesize
+++ubi_write_recovery=ubi check recovery && ubi remove recovery ; run ubi_remove_rootfs ; ubi create recovery $filesize dynamic && ubi write $loadaddr recovery $filesize
+++_init_env=setenv _init_env ; run ubi_create_env ; saveenv ; saveenv
+++_firstboot=setenv _firstboot ; run _switch_to_menu ; run _init_env ; run boot_first
+++_switch_to_menu=setenv _switch_to_menu ; setenv bootdelay 3 ; setenv bootmenu_delay 3 ; setenv bootmenu_0 $bootmenu_0d ; setenv bootmenu_0d ; run _bootmenu_update_title
+++_bootmenu_update_title=setenv _bootmenu_update_title ; setenv bootmenu_title "$bootmenu_title       [33m$ver[0m"
+++
+diff --git a/target/linux/mediatek/dts/mt7981b-totolink-X30.dts b/target/linux/mediatek/dts/mt7981b-totolink-X30.dts
+new file mode 100644
+index 00000000000000..1b8e51027ca493
+--- /dev/null
++++ b/target/linux/mediatek/dts/mt7981b-totolink-X30.dts
+@@ -0,0 +1,303 @@
++// SPDX-License-Identifier: (GPL-2.0 OR MIT)
++
++/dts-v1/;
++#include <dt-bindings/gpio/gpio.h>
++#include <dt-bindings/input/input.h>
++#include "mt7981b.dtsi"
++
++/ {
++	model = "TOTOLINK X30";
++	compatible = "totolink,X30", "mediatek,mt7981";
++
++	aliases {
++		label-mac-device = &gmac0;
++		led-boot = &led_cpu;
++		led-failsafe = &led_cpu;
++		led-running = &led_cpu;
++		led-upgrade = &led_cpu;
++		serial0 = &uart0;
++	};
++
++	chosen {
++		rootdisk = <&ubi_rootdisk>;
++		stdout-path = "serial0:115200n8";
++	};
++
++	memory@40000000 {
++		reg = <0 0x40000000 0 0x10000000>;
++		device_type = "memory";
++	};
++
++	gpio-leds {
++		compatible = "gpio-leds";
++
++		led_cpu: cpu {
++			label = "cpu";
++			function = LED_FUNCTION_CPU;
++			color = <LED_COLOR_ID_BLUE>;
++            gpios = <&pio 15 GPIO_ACTIVE_LOW>;
++			default-state = "on";
++        };
++
++        wlan2g {
++			label = "wlan2g";
++			function = LED_FUNCTION_WLAN_2GHZ;
++            color = <LED_COLOR_ID_BLUE>;
++            gpios = <&pio 35 GPIO_ACTIVE_LOW>;
++			linux,default-trigger = "phy0tpt";
++        };
++
++        wlan5g {
++			label = "wlan5g";
++			function = LED_FUNCTION_WLAN_5GHZ;
++            color = <LED_COLOR_ID_BLUE>;
++            gpios = <&pio 34 GPIO_ACTIVE_LOW>;
++			linux,default-trigger = "phy1tpt";
++        };
++
++        usb {
++			label = "usb";
++			function = LED_FUNCTION_USB;
++            color = <LED_COLOR_ID_BLUE>;
++            gpios = <&pio 5 GPIO_ACTIVE_LOW>;
++			linux,default-trigger = "usbdev";
++        };
++
++        mesh_blue {
++			label = "mesh_blue";
++			function = "mesh_blue";
++            color = <LED_COLOR_ID_BLUE>;
++            gpios = <&pio 4 GPIO_ACTIVE_LOW>;
++        };
++
++        mesh_red {
++			label = "mesh_red";
++			function = "mesh_red";
++            color = <LED_COLOR_ID_RED>;
++            gpios = <&pio 12 GPIO_ACTIVE_HIGH>;
++        };
++	};
++
++	keys {
++		compatible = "gpio-keys";
++
++		reset {
++			label = "reset";
++			gpios = <&pio 1 GPIO_ACTIVE_LOW>;
++			linux,code = <KEY_RESTART>;
++		};
++
++		wps {
++			label = "wps";
++			gpios = <&pio 0 GPIO_ACTIVE_LOW>;
++			linux,code = <KEY_WPS_BUTTON>;
++		};
++	};
++};
++
++&pio {
++	nand_pins: spi0-pins {
++		mux {
++			function = "spi";
++			groups = "spi0", "spi0_wp_hold";
++		};
++		conf-pu {
++			pins = "SPI0_CS", "SPI0_HOLD", "SPI0_WP";
++			drive-strength = <MTK_DRIVE_4mA>;
++			bias-pull-up = <MTK_PUPD_SET_R1R0_11>;
++		};
++		conf-pd {
++			pins = "SPI0_CLK", "SPI0_MOSI", "SPI0_MISO";
++			drive-strength = <MTK_DRIVE_4mA>;
++			bias-pull-down = <MTK_PUPD_SET_R1R0_11>;
++		};
++	};
++};
++
++&uart0 {
++	status = "okay";
++};
++
++&eth {
++	pinctrl-names = "default";
++	pinctrl-0 = <&mdio_pins &gbe_led0_pins>;
++
++	status = "okay";
++
++	gmac0: mac@0 {
++		compatible = "mediatek,eth-mac";
++		reg = <0>;
++		phy-mode = "2500base-x";
++
++		nvmem-cells = <&macaddr_factory_4 3>;
++		nvmem-cell-names = "mac-address";
++
++		fixed-link {
++			speed = <2500>;
++			full-duplex;
++			pause;
++		};
++	};
++
++	mac@1 {
++		compatible = "mediatek,eth-mac";
++		reg = <1>;
++		label = "wan";
++		phy-mode = "gmii";
++		phy-handle = <&int_gbe_phy>;
++
++		nvmem-cells = <&macaddr_factory_4 1>;
++		nvmem-cell-names = "mac-address";
++	};
++};
++
++&mdio_bus {
++	switch: switch@1f {
++		compatible = "mediatek,mt7531";
++		reg = <31>;
++		reset-gpios = <&pio 39 GPIO_ACTIVE_HIGH>;
++
++		ports {
++			#address-cells = <1>;
++			#size-cells = <0>;
++
++			port@0 {
++				reg = <0>;
++				label = "lan4";
++			};
++
++			port@1 {
++				reg = <1>;
++				label = "lan3";
++			};
++
++			port@2 {
++				reg = <2>;
++				label = "lan2";
++			};
++
++			port@3 {
++				reg = <3>;
++				label = "lan1";
++			};
++
++			port@6 {
++				reg = <6>;
++				ethernet = <&gmac0>;
++				phy-mode = "2500base-x";
++
++				fixed-link {
++					speed = <2500>;
++					full-duplex;
++					pause;
++				};
++			};
++		};
++	};
++};
++
++&spi0 {
++	status = "okay";
++
++	pinctrl-names = "default";
++	pinctrl-0 = <&nand_pins>;
++
++	spi_nand@0 {
++		#address-cells = <1>;
++		#size-cells = <1>;
++		compatible = "spi-nand";
++		reg = <0>;
++
++		spi-max-frequency = <52000000>;
++		spi-tx-bus-width = <4>;
++		spi-rx-bus-width = <4>;
++
++		mediatek,nmbm;
++		mediatek,bmt-max-ratio = <1>;
++		mediatek,bmt-max-reserved-blocks = <64>;
++		mediatek,bmt-remap-range = <0x000000 0x580000>;
++
++		partitions: partitions {
++			compatible = "fixed-partitions";
++			#address-cells = <1>;
++			#size-cells = <1>;
++
++			partition@0 {
++				label = "bl2";
++				reg = <0x0 0x100000>;
++				read-only;
++			};
++
++			partition@100000 {
++				label = "u-boot-env";
++				reg = <0x100000 0x80000>;
++			};
++
++			partition@180000 {
++				label = "factory";
++				reg = <0x180000 0x200000>;
++				read-only;
++
++				nvmem-layout {
++					compatible = "fixed-layout";
++					#address-cells = <1>;
++					#size-cells = <1>;
++
++					eeprom_factory_0: eeprom@0 {
++						reg = <0x0 0x1000>;
++					};
++
++					macaddr_factory_4: macaddr@4 {
++						compatible = "mac-base";
++						reg = <0x4 0x6>;
++						#nvmem-cell-cells = <1>;
++					};
++				};
++			};
++
++			partition@380000 {
++				label = "fip";
++				reg = <0x380000 0x200000>;
++				read-only;
++			};
++
++			partition@580000 {
++				compatible = "linux,ubi";
++				label = "ubi";
++				reg = <0x580000 0x7a80000>;
++
++				volumes {
++					ubi_rootdisk: ubi-volume-fit {
++						volname = "fit";
++					};
++				};
++			};
++		};
++	};
++};
++
++&usb_phy {
++	status = "okay";
++};
++
++&xhci {
++	status = "okay";
++};
++
++&wifi {
++	status = "okay";
++	nvmem-cell-names = "eeprom";
++	nvmem-cells = <&eeprom_factory_0>;
++
++	band@0 {
++		reg = <0>;
++		nvmem-cells = <&macaddr_factory_4 0>;
++		nvmem-cell-names = "mac-address";
++	};
++
++	band@1 {
++		reg = <1>;
++		nvmem-cells = <&macaddr_factory_4 0>;
++		nvmem-cell-names = "mac-address";
++	};
++};
+diff --git a/target/linux/mediatek/image/filogic.mk b/target/linux/mediatek/image/filogic.mk
+index 490fb69afa0479..21c1fd36a6fb68 100644
+--- a/target/linux/mediatek/image/filogic.mk
++++ b/target/linux/mediatek/image/filogic.mk
+@@ -2474,6 +2474,30 @@ define Device/totolink_x6000r
+ endef
+ TARGET_DEVICES += totolink_x6000r
+ 
++define Device/totolink_X30
++  DEVICE_VENDOR := TOTOLINK
++  DEVICE_MODEL := X30
++  DEVICE_DTS := mt7981b-totolink-X30
++  DEVICE_DTS_DIR := ../dts
++  DEVICE_PACKAGES := kmod-mt7915e kmod-mt7981-firmware mt7981-wo-firmware
++  UBINIZE_OPTS := -E 5
++  BLOCKSIZE := 128k
++  PAGESIZE := 2048
++  KERNEL_IN_UBI := 1
++  UBOOTENV_IN_UBI := 1
++  IMAGES := factory.bin sysupgrade.bin
++  KERNEL_INITRAMFS_SUFFIX := -recovery.bin
++  KERNEL := kernel-bin | gzip
++  KERNEL_INITRAMFS := kernel-bin | lzma | \
++        fit lzma $$(KDIR)/image-$$(firstword $$(DEVICE_DTS)).dtb with-initrd | pad-to 64k
++  IMAGE/sysupgrade.bin := append-kernel | \
++        fit gzip $$(KDIR)/image-$$(firstword $$(DEVICE_DTS)).dtb external-static-with-rootfs | append-metadata
++  ARTIFACTS := preloader.bin bl31-uboot.fip
++  ARTIFACT/preloader.bin := mt7981-bl2 spim-nand-ddr3
++  ARTIFACT/bl31-uboot.fip := mt7981-bl31-uboot totolink_X30
++endef
++TARGET_DEVICES += totolink_X30
++
+ define Device/tplink_archer-ax80-v1
+   DEVICE_VENDOR := TP-Link
+   DEVICE_MODEL := Archer AX80V1

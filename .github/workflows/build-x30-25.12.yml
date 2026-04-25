@@ -31,6 +31,7 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
+          echo "Builder repository contents:"
           pwd
           find . -maxdepth 3 -type f | sort
 
@@ -91,7 +92,10 @@ jobs:
           git config user.email "x30-builder@example.invalid"
 
           UPSTREAM_SHA="$(git rev-parse --short=12 HEAD)"
+          CONFIG_HASH="$(sha256sum ../config/x30.config | cut -c1-12)"
+
           echo "upstream_sha=${UPSTREAM_SHA}" >> "$GITHUB_OUTPUT"
+          echo "config_hash=${CONFIG_HASH}" >> "$GITHUB_OUTPUT"
 
           echo "Checking whether X30 support already exists in ${OPENWRT_REF}..."
           if grep -q "Device/totolink_X30" target/linux/mediatek/image/filogic.mk; then
@@ -112,7 +116,7 @@ jobs:
           git status --short
           git log -1 --oneline
 
-          TAG="x30-25.12-${UPSTREAM_SHA}-${PATCH_ID}"
+          TAG="x30-25.12-${UPSTREAM_SHA}-${PATCH_ID}-${CONFIG_HASH}"
           echo "tag=${TAG}" >> "$GITHUB_OUTPUT"
           echo "patch_id=${PATCH_ID}" >> "$GITHUB_OUTPUT"
 
@@ -152,7 +156,7 @@ jobs:
 
           if ! grep -q '^CONFIG_TARGET_mediatek_filogic_DEVICE_totolink_X30=y' .config; then
             echo "ERROR: X30 target device was not selected after make defconfig."
-            echo "Matching X30-related config lines:"
+            echo "Matching X30/TOTOLINK config lines:"
             grep -Ei 'x30|totolink' .config || true
             exit 1
           fi
@@ -245,11 +249,16 @@ jobs:
           ls -lh
 
           echo "Sysupgrade image check:"
-          if ! ls *x30*sysupgrade* *X30*sysupgrade* *totolink*sysupgrade* *TOTOLINK*sysupgrade* >/dev/null 2>&1; then
-            echo "ERROR: No sysupgrade image found for X30/TOTOLINK."
+          SYSUPGRADE_IMAGE="$(find . -maxdepth 1 -type f \( -iname '*x30*sysupgrade*.bin' -o -iname '*totolink*sysupgrade*.bin' \) | sort | head -n 1)"
+
+          if [ -z "${SYSUPGRADE_IMAGE}" ]; then
+            echo "ERROR: No X30/TOTOLINK sysupgrade image found."
+            echo "Files in output directory:"
             ls -lh
             exit 1
           fi
+
+          echo "Found sysupgrade image: ${SYSUPGRADE_IMAGE}"
 
       - name: Upload diagnostics on failure
         if: failure()
@@ -281,6 +290,7 @@ jobs:
           TAG: ${{ steps.prep.outputs.tag }}
           UPSTREAM_SHA: ${{ steps.prep.outputs.upstream_sha }}
           PATCH_ID: ${{ steps.prep.outputs.patch_id }}
+          CONFIG_HASH: ${{ steps.prep.outputs.config_hash }}
         shell: bash
         run: |
           set -euo pipefail
@@ -291,10 +301,11 @@ jobs:
 
           Upstream OpenWrt branch SHA: ${UPSTREAM_SHA}
           X30 patch: ${PATCH_ID}
+          Build config hash: ${CONFIG_HASH}
           Target: mediatek/filogic
           Device profile: totolink_X30
 
           Routine upgrades should use only:
-          the TOTOLINK X30 squashfs sysupgrade image.
+          openwrt-mediatek-filogic-totolink_X30-squashfs-sysupgrade.bin
 
           Do not flash preloader.bin or bl31-uboot.fip for routine upgrades."

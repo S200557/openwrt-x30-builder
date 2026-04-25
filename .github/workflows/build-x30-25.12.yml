@@ -3,7 +3,6 @@ name: Build TOTOLINK X30 OpenWrt 25.12
 on:
   workflow_dispatch:
   schedule:
-    # Weekly Saturday 03:00 UTC
     - cron: "0 3 * * 6"
 
 permissions:
@@ -31,31 +30,21 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          echo "Builder repository contents:"
-          pwd
           find . -maxdepth 3 -type f | sort
 
       - name: Free disk space
         shell: bash
         run: |
           set -euo pipefail
-          echo "Disk before cleanup:"
           df -h
-
-          sudo rm -rf /usr/share/dotnet || true
-          sudo rm -rf /opt/ghc || true
-          sudo rm -rf /usr/local/lib/android || true
-          sudo rm -rf /opt/hostedtoolcache/CodeQL || true
+          sudo rm -rf /usr/share/dotnet /opt/ghc /usr/local/lib/android /opt/hostedtoolcache/CodeQL || true
           docker system prune -af || true
-
-          echo "Disk after cleanup:"
           df -h
 
       - name: Install build dependencies
         shell: bash
         run: |
           set -euo pipefail
-
           sudo apt-get update
           sudo apt-get install -y \
             build-essential clang flex bison g++ gawk \
@@ -68,16 +57,12 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-
           git clone \
             --branch "${OPENWRT_REF}" \
             --single-branch \
             https://github.com/openwrt/openwrt.git openwrt
-
           cd openwrt
-          echo "OpenWrt branch:"
           git branch --show-current
-          echo "OpenWrt HEAD:"
           git log -1 --oneline
 
       - name: Prepare X30 source tree
@@ -87,34 +72,33 @@ jobs:
           set -euo pipefail
 
           cd openwrt
-
           git config user.name "x30-builder"
           git config user.email "x30-builder@example.invalid"
 
           UPSTREAM_SHA="$(git rev-parse --short=12 HEAD)"
-          CONFIG_HASH="$(sha256sum ../config/x30.config | cut -c1-12)"
+          CONFIG_HASH="$(sha256sum ../config/x30.config ../patches/0002-mediatek-filogic-add-totolink-x30-fit-upgrade.patch | sha256sum | cut -c1-12)"
 
           echo "upstream_sha=${UPSTREAM_SHA}" >> "$GITHUB_OUTPUT"
           echo "config_hash=${CONFIG_HASH}" >> "$GITHUB_OUTPUT"
 
-          echo "Checking whether X30 support already exists in ${OPENWRT_REF}..."
           if grep -q "Device/totolink_X30" target/linux/mediatek/image/filogic.mk; then
-            echo "X30 support already exists in ${OPENWRT_REF}; local patch will not be applied."
+            echo "X30 image profile already exists in ${OPENWRT_REF}; not applying profile patch."
             PATCH_ID="official"
           else
-            echo "Applying pinned X30 patch: ${X30_PATCH_COMMIT}"
-            test -f "../patches/0001-mediatek-add-TOTOLINK-X30-support.patch"
+            echo "Applying pinned X30 board-support patch: ${X30_PATCH_COMMIT}"
             git am --3way "../patches/0001-mediatek-add-TOTOLINK-X30-support.patch"
             PATCH_ID="${X30_PATCH_COMMIT:0:12}"
           fi
 
-          echo "Verifying X30 profile after patch/official support check..."
+          echo "Applying X30 FIT sysupgrade platform patch"
+          git apply "../patches/0002-mediatek-filogic-add-totolink-x30-fit-upgrade.patch"
+
+          echo "Verifying X30 image profile"
           grep -n "Device/totolink_X30" target/linux/mediatek/image/filogic.mk
           grep -n "TARGET_DEVICES += totolink_X30" target/linux/mediatek/image/filogic.mk
 
-          echo "Source tree status:"
-          git status --short
-          git log -1 --oneline
+          echo "Verifying X30 FIT upgrade handler"
+          grep -n "totolink,x30" target/linux/mediatek/filogic/base-files/lib/upgrade/platform.sh
 
           TAG="x30-25.12-${UPSTREAM_SHA}-${PATCH_ID}-${CONFIG_HASH}"
           echo "tag=${TAG}" >> "$GITHUB_OUTPUT"
@@ -124,7 +108,6 @@ jobs:
             echo "Release tag ${TAG} already exists. Nothing new to build."
             echo "skip_build=true" >> "$GITHUB_OUTPUT"
           else
-            echo "This is a new build tag: ${TAG}"
             echo "skip_build=false" >> "$GITHUB_OUTPUT"
           fi
 
@@ -143,28 +126,19 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-
           cp ../config/x30.config .config
-
-          echo "Seed config:"
           cat .config
-
           make defconfig
 
-          echo "Resolved target/device/package config:"
           grep -E 'CONFIG_TARGET_mediatek|CONFIG_TARGET_mediatek_filogic_DEVICE_totolink_X30|CONFIG_PACKAGE_luci|CONFIG_BUILD_LOG' .config || true
 
           if ! grep -q '^CONFIG_TARGET_mediatek_filogic_DEVICE_totolink_X30=y' .config; then
             echo "ERROR: X30 target device was not selected after make defconfig."
-            echo "Matching X30/TOTOLINK config lines:"
             grep -Ei 'x30|totolink' .config || true
             exit 1
           fi
 
-          echo "OpenWrt diffconfig:"
           ./scripts/diffconfig.sh
-
-          echo "OpenWrt make info entries matching x30/totolink:"
           make info | grep -Ei 'x30|totolink' || true
 
       - name: Download sources
@@ -181,17 +155,11 @@ jobs:
         shell: bash
         run: |
           set -o pipefail
-
-          echo "Disk before build:"
           df -h
-
           if ! make -j"${BUILD_JOBS}" V=s 2>&1 | tee ../build.log; then
-            echo "Parallel build failed. Retrying single-threaded to expose exact failing command..."
             make -j1 V=sc 2>&1 | tee ../build-single.log
             exit 1
           fi
-
-          echo "Disk after build:"
           df -h
 
       - name: Collect artifacts
@@ -202,28 +170,16 @@ jobs:
 
           mkdir -p out
           cd openwrt
-
           TARGET_DIR="bin/targets/mediatek/filogic"
 
-          if [ ! -d "${TARGET_DIR}" ]; then
-            echo "ERROR: target directory does not exist: ${TARGET_DIR}"
-            echo "Existing bin/targets tree:"
-            find bin/targets -maxdepth 4 -type f -printf '%p\n' | sort || true
-            exit 1
-          fi
-
-          echo "Full target directory contents:"
           find "${TARGET_DIR}" -maxdepth 2 -type f -printf '%p\n' | sort
 
-          echo "Searching for X30/TOTOLINK firmware artifacts:"
           find "${TARGET_DIR}" -maxdepth 1 -type f \
             \( -iname '*x30*' -o -iname '*totolink*' \) \
             -printf '%p\n' | sort | tee ../x30-artifact-list.txt
 
           if [ ! -s ../x30-artifact-list.txt ]; then
             echo "ERROR: No X30/TOTOLINK firmware artifacts found."
-            echo "Full target directory contents were:"
-            find "${TARGET_DIR}" -maxdepth 2 -type f -printf '%p\n' | sort
             exit 1
           fi
 
@@ -232,9 +188,7 @@ jobs:
           done < ../x30-artifact-list.txt
 
           for meta in sha256sums config.buildinfo feeds.buildinfo version.buildinfo profiles.json; do
-            if [ -f "${TARGET_DIR}/${meta}" ]; then
-              cp -v "${TARGET_DIR}/${meta}" "../out/${meta}"
-            fi
+            [ -f "${TARGET_DIR}/${meta}" ] && cp -v "${TARGET_DIR}/${meta}" "../out/${meta}"
           done
 
           ./scripts/diffconfig.sh > ../out/x30.diffconfig
@@ -244,20 +198,13 @@ jobs:
 
           cd ../out
           sha256sum * > BUILD-SHA256SUMS.txt
-
-          echo "Final release artifact directory:"
           ls -lh
 
-          echo "Sysupgrade image check:"
           SYSUPGRADE_IMAGE="$(find . -maxdepth 1 -type f \( -iname '*x30*sysupgrade*.bin' -o -iname '*totolink*sysupgrade*.bin' \) | sort | head -n 1)"
-
           if [ -z "${SYSUPGRADE_IMAGE}" ]; then
             echo "ERROR: No X30/TOTOLINK sysupgrade image found."
-            echo "Files in output directory:"
-            ls -lh
             exit 1
           fi
-
           echo "Found sysupgrade image: ${SYSUPGRADE_IMAGE}"
 
       - name: Upload diagnostics on failure
@@ -301,9 +248,11 @@ jobs:
 
           Upstream OpenWrt branch SHA: ${UPSTREAM_SHA}
           X30 patch: ${PATCH_ID}
-          Build config hash: ${CONFIG_HASH}
+          Build config/patch hash: ${CONFIG_HASH}
           Target: mediatek/filogic
           Device profile: totolink_X30
+
+          This build includes the TOTOLINK X30 FIT sysupgrade platform handler.
 
           Routine upgrades should use only:
           openwrt-mediatek-filogic-totolink_X30-squashfs-sysupgrade.bin

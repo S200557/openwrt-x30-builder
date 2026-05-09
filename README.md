@@ -24,7 +24,7 @@ TOTOLINK X30
 - LuCI
 - LuCI HTTPS support
 - kmod-tun
-- Tailscale (includes the tailscaled daemon)
+- Tailscale / tailscaled
 - ca-bundle
 
 ## Post-flash Tailscale setup

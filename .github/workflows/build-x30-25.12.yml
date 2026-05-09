@@ -68,8 +68,11 @@ jobs:
             --branch "${OPENWRT_REF}" \
             --single-branch \
             https://github.com/openwrt/openwrt.git openwrt
+
           cd openwrt
+          echo "OpenWrt ref:"
           git describe --tags --exact-match || git branch --show-current
+          echo "OpenWrt HEAD:"
           git log -1 --oneline
 
       - name: Prepare X30 source tree
@@ -83,7 +86,11 @@ jobs:
           git config user.email "x30-builder@example.invalid"
 
           UPSTREAM_SHA="$(git rev-parse --short=12 HEAD)"
-          CONFIG_HASH="$(sha256sum ../config/x30.config ../patches/0002-mediatek-filogic-add-totolink-x30-fit-upgrade.patch | sha256sum | cut -c1-12)"
+          CONFIG_HASH="$(sha256sum \
+            ../config/x30.config \
+            ../patches/0001-mediatek-add-TOTOLINK-X30-support.patch \
+            ../patches/0002-mediatek-filogic-add-totolink-x30-fit-upgrade.patch \
+            | sha256sum | cut -c1-12)"
 
           echo "upstream_sha=${UPSTREAM_SHA}" >> "$GITHUB_OUTPUT"
           echo "config_hash=${CONFIG_HASH}" >> "$GITHUB_OUTPUT"
@@ -98,7 +105,11 @@ jobs:
           fi
 
           echo "Applying X30 FIT sysupgrade platform patch"
-          git apply "../patches/0002-mediatek-filogic-add-totolink-x30-fit-upgrade.patch"
+          if grep -q "totolink,x30" target/linux/mediatek/filogic/base-files/lib/upgrade/platform.sh; then
+            echo "X30 FIT sysupgrade handler already exists; not applying local platform patch."
+          else
+            git apply "../patches/0002-mediatek-filogic-add-totolink-x30-fit-upgrade.patch"
+          fi
 
           echo "Verifying X30 image profile"
           grep -n "Device/totolink_X30" target/linux/mediatek/image/filogic.mk
@@ -107,7 +118,7 @@ jobs:
           echo "Verifying X30 FIT upgrade handler"
           grep -n "totolink,x30" target/linux/mediatek/filogic/base-files/lib/upgrade/platform.sh
 
-          TAG="x30-25.12-${UPSTREAM_SHA}-${PATCH_ID}-${CONFIG_HASH}"
+          TAG="x30-25.12.3-${UPSTREAM_SHA}-${PATCH_ID}-${CONFIG_HASH}"
           echo "tag=${TAG}" >> "$GITHUB_OUTPUT"
           echo "patch_id=${PATCH_ID}" >> "$GITHUB_OUTPUT"
 
@@ -133,29 +144,35 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
+
           cp ../config/x30.config .config
+          echo "Seed config:"
           cat .config
+
           make defconfig
 
-          grep -E 'CONFIG_TARGET_mediatek|CONFIG_TARGET_mediatek_filogic_DEVICE_totolink_X30|CONFIG_PACKAGE_luci|CONFIG_PACKAGE_kmod-tun|CONFIG_PACKAGE_tailscale|CONFIG_PACKAGE_tailscaled|CONFIG_PACKAGE_ca-bundle|CONFIG_BUILD_LOG' .config || true
+          echo "Resolved important config lines:"
+          grep -E 'CONFIG_TARGET_mediatek|CONFIG_TARGET_mediatek_filogic_DEVICE_totolink_X30|CONFIG_PACKAGE_luci|CONFIG_PACKAGE_kmod-tun|CONFIG_PACKAGE_tailscale|CONFIG_PACKAGE_ca-bundle|CONFIG_BUILD_LOG' .config || true
 
           required_config_symbols=(
             CONFIG_TARGET_mediatek_filogic_DEVICE_totolink_X30
             CONFIG_PACKAGE_kmod-tun
             CONFIG_PACKAGE_tailscale
-            CONFIG_PACKAGE_tailscaled
             CONFIG_PACKAGE_ca-bundle
           )
 
           for symbol in "${required_config_symbols[@]}"; do
             if ! grep -q "^${symbol}=y" .config; then
               echo "ERROR: Required symbol ${symbol}=y was not selected after make defconfig."
-              grep -Ei 'x30|totolink|tailscale|tailscaled|kmod-tun|ca-bundle' .config || true
+              grep -Ei 'x30|totolink|tailscale|kmod-tun|ca-bundle|tun' .config || true
               exit 1
             fi
           done
 
+          echo "OpenWrt diffconfig:"
           ./scripts/diffconfig.sh
+
+          echo "OpenWrt make info entries matching x30/totolink:"
           make info | grep -Ei 'x30|totolink' || true
 
       - name: Download sources
@@ -173,10 +190,13 @@ jobs:
         run: |
           set -o pipefail
           df -h
+
           if ! make -j"${BUILD_JOBS}" V=s 2>&1 | tee ../build.log; then
+            echo "Parallel build failed. Retrying single-threaded to expose exact failing command..."
             make -j1 V=sc 2>&1 | tee ../build-single.log
             exit 1
           fi
+
           df -h
 
       - name: Collect artifacts
@@ -189,8 +209,10 @@ jobs:
           cd openwrt
           TARGET_DIR="bin/targets/mediatek/filogic"
 
+          echo "Full target directory contents:"
           find "${TARGET_DIR}" -maxdepth 2 -type f -printf '%p\n' | sort
 
+          echo "Searching for X30/TOTOLINK firmware artifacts:"
           find "${TARGET_DIR}" -maxdepth 1 -type f \
             \( -iname '*x30*' -o -iname '*totolink*' \) \
             -printf '%p\n' | sort | tee ../x30-artifact-list.txt
@@ -231,14 +253,23 @@ jobs:
           fi
           echo "Found X30 manifest: ${X30_MANIFEST}"
 
-          required_manifest_packages=(kmod-tun tailscale tailscaled ca-bundle)
+          required_manifest_packages=(
+            kmod-tun
+            tailscale
+            ca-bundle
+          )
+
           for package in "${required_manifest_packages[@]}"; do
             if ! grep -Eq "^${package}( |$)" "${X30_MANIFEST}"; then
               echo "ERROR: Required package ${package} was not found in ${X30_MANIFEST}."
+              echo "Manifest contents:"
               cat "${X30_MANIFEST}"
               exit 1
             fi
           done
+
+          echo "Required manifest packages found:"
+          grep -E '^(kmod-tun|tailscale|ca-bundle)( |$)' "${X30_MANIFEST}"
 
       - name: Upload diagnostics on failure
         if: failure()
@@ -276,7 +307,7 @@ jobs:
           set -euo pipefail
 
           gh release create "${TAG}" out/* \
-            --title "TOTOLINK X30 OpenWrt 25.12 build ${TAG}" \
+            --title "TOTOLINK X30 OpenWrt 25.12.3 build ${TAG}" \
             --notes "Custom TOTOLINK X30 build from OpenWrt ${OPENWRT_REF}.
 
           Upstream OpenWrt release tag SHA: ${UPSTREAM_SHA}
@@ -285,7 +316,12 @@ jobs:
           Target: mediatek/filogic
           Device profile: totolink_X30
 
-          This build includes the TOTOLINK X30 FIT sysupgrade platform handler.
+          This build includes:
+          - TOTOLINK X30 board support
+          - TOTOLINK X30 FIT sysupgrade platform handler
+          - kmod-tun
+          - tailscale
+          - ca-bundle
 
           Routine upgrades should use only:
           openwrt-mediatek-filogic-totolink_X30-squashfs-sysupgrade.bin

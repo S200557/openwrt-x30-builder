@@ -2,6 +2,13 @@ name: Build TOTOLINK X30 OpenWrt 25.12
 
 on:
   workflow_dispatch:
+  push:
+    branches:
+      - main
+    paths:
+      - "config/x30.config"
+      - "patches/**"
+      - ".github/workflows/build-x30-25.12.yml"
   schedule:
     - cron: "0 3 * * 6"
 

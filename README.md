@@ -17,3 +17,24 @@ Device:
 
 ```text
 TOTOLINK X30
+```
+
+## Built-in packages
+
+- LuCI
+- LuCI HTTPS support
+- kmod-tun
+- Tailscale / tailscaled
+- ca-bundle
+
+## Post-flash Tailscale setup
+
+```sh
+ssh root@192.168.1.1
+/etc/init.d/tailscale enable
+/etc/init.d/tailscale start
+tailscale up
+tailscale status
+```
+
+Do not commit Tailscale credentials, auth keys, reusable auth tokens, OAuth secrets, API keys, or other secrets to this repository.

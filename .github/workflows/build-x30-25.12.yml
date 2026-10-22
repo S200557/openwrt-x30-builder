@@ -29,6 +29,7 @@ concurrency:
 env:
   X30_PATCH_COMMIT: 1e4bed859aeb3c7047ee602866d833efed853e2d
   BUILD_JOBS: 2
+  BUILD_SOURCE_HEAD: ${{ github.event.pull_request.head.sha || github.sha }}
 
 jobs:
   build:
@@ -64,6 +65,7 @@ jobs:
             config/x30.config
             patches/0001-mediatek-add-TOTOLINK-X30-support.patch
             patches/0002-mediatek-filogic-add-totolink-x30-fit-upgrade.patch
+            patches/0003-mediatek-filogic-correct-totolink-x30-hardware.patch
           )
 
           for file in "${required_files[@]}"; do
@@ -226,8 +228,11 @@ jobs:
             ../config/x30.config \
             ../patches/0001-mediatek-add-TOTOLINK-X30-support.patch \
             ../patches/0002-mediatek-filogic-add-totolink-x30-fit-upgrade.patch \
+            ../patches/0003-mediatek-filogic-correct-totolink-x30-hardware.patch \
             ../.github/workflows/build-x30-25.12.yml \
             ../tests/test-x30-fit-upgrade.sh \
+            ../tests/test-x30-hardware.sh \
+            ../tests/test-x30-device-tree.py \
             | sha256sum | cut -c1-12)"
 
           echo "upstream_sha=${UPSTREAM_SHA}" >> "$GITHUB_OUTPUT"
@@ -252,7 +257,11 @@ jobs:
             git apply "../patches/0002-mediatek-filogic-add-totolink-x30-fit-upgrade.patch"
           fi
 
+          echo "Applying verified stable X30 hardware corrections"
+          git apply --check "../patches/0003-mediatek-filogic-correct-totolink-x30-hardware.patch"
+          git apply "../patches/0003-mediatek-filogic-correct-totolink-x30-hardware.patch"
           sh ../tests/test-x30-fit-upgrade.sh "$PWD"
+          sh ../tests/test-x30-hardware.sh "$PWD"
 
           echo "Verifying X30 image profile"
           grep -n "Device/totolink_X30" target/linux/mediatek/image/filogic.mk
@@ -349,6 +358,15 @@ jobs:
 
           df -h
 
+      - name: Validate the compiled hardware description
+        if: steps.prep.outputs.skip_build != 'true'
+        shell: bash
+        run: |
+          set -euo pipefail
+          mapfile -t dtbs < <(find openwrt/build_dir -path '*/linux-mediatek_filogic/image-mt7981b-totolink-X30.dtb' -type f)
+          test "${#dtbs[@]}" -eq 1
+          python3 tests/test-x30-device-tree.py "${dtbs[0]}"
+
       - name: Collect artifacts
         if: steps.prep.outputs.skip_build != 'true'
         shell: bash
@@ -384,6 +402,15 @@ jobs:
           git rev-parse HEAD > ../out/openwrt-git-head.txt
           git log -1 --oneline > ../out/openwrt-git-log.txt
           cp ../x30-artifact-list.txt ../out/x30-artifact-list.txt
+
+          jq -n \
+            --arg builder_commit "$BUILD_SOURCE_HEAD" \
+            --arg checkout_commit "$GITHUB_SHA" \
+            --arg upstream_commit "$(git rev-parse "${OPENWRT_REF}^{commit}")" \
+            --arg openwrt_ref "$OPENWRT_REF" \
+            --arg hardware_patch_sha256 "$(sha256sum ../patches/0003-mediatek-filogic-correct-totolink-x30-hardware.patch | cut -d' ' -f1)" \
+            '{builder_commit:$builder_commit, checkout_commit:$checkout_commit, upstream_commit:$upstream_commit, openwrt_ref:$openwrt_ref, hardware_patch_sha256:$hardware_patch_sha256}' \
+            > ../out/x30-build-provenance.json
 
           cd ../out
           sha256sum * > BUILD-SHA256SUMS.txt
@@ -421,6 +448,10 @@ jobs:
             kmod-tun
             tailscale
             ca-bundle
+            ip-bridge
+            iperf3
+            libiperf3
+            libatomic1
           )
 
           for package in "${required_manifest_packages[@]}"; do

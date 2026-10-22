@@ -1,3 +1,7 @@
-*.sh text eol=lf
+*.config text eol=lf
 *.patch text eol=lf
+*.sh text eol=lf
+*.py text eol=lf
 *.yml text eol=lf
+*.yaml text eol=lf
+*.md text eol=lf

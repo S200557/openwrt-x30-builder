@@ -50,6 +50,11 @@ jobs:
           git am --3way ../patches/0001-mediatek-add-TOTOLINK-X30-support.patch
           git apply --check ../patches/0002-mediatek-filogic-add-totolink-x30-fit-upgrade.patch
           git apply ../patches/0002-mediatek-filogic-add-totolink-x30-fit-upgrade.patch
+          git apply --check ../patches/0003-mediatek-filogic-correct-totolink-x30-hardware.patch
+          git apply ../patches/0003-mediatek-filogic-correct-totolink-x30-hardware.patch
 
       - name: Verify X30 FIT upgrade and image-check dispatch
         run: sh tests/test-x30-fit-upgrade.sh "$PWD/openwrt"
+
+      - name: Verify X30 hardware defaults and neighboring device cases
+        run: sh tests/test-x30-hardware.sh "$PWD/openwrt"

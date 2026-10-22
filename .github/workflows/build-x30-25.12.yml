@@ -2,21 +2,28 @@ name: Build TOTOLINK X30 OpenWrt latest release
 
 on:
   workflow_dispatch:
+  pull_request:
+    paths:
+      - "config/x30.config"
+      - "patches/**"
+      - "tests/**"
+      - ".github/workflows/**"
   push:
     branches:
       - main
     paths:
       - "config/x30.config"
       - "patches/**"
-      - ".github/workflows/build-x30-25.12.yml"
+      - "tests/**"
+      - ".github/workflows/**"
   schedule:
     - cron: "0 3 * * 6"
 
 permissions:
-  contents: write
+  contents: read
 
 concurrency:
-  group: x30-openwrt-latest-release
+  group: x30-openwrt-${{ github.event.pull_request.number || github.ref }}
   cancel-in-progress: false
 
 env:
@@ -27,10 +34,20 @@ jobs:
   build:
     runs-on: ubuntu-24.04
     timeout-minutes: 360
+    outputs:
+      skip_build: ${{ steps.prep.outputs.skip_build }}
+      tag: ${{ steps.prep.outputs.tag }}
+      openwrt_ref: ${{ steps.openwrt_release.outputs.openwrt_ref }}
+      openwrt_version: ${{ steps.openwrt_release.outputs.openwrt_version }}
+      upstream_sha: ${{ steps.prep.outputs.upstream_sha }}
+      patch_id: ${{ steps.prep.outputs.patch_id }}
+      config_hash: ${{ steps.prep.outputs.config_hash }}
 
     steps:
       - name: Checkout builder repository
-        uses: actions/checkout@v6
+        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+        with:
+          persist-credentials: false
 
       - name: Show builder repository contents
         shell: bash
@@ -210,6 +227,7 @@ jobs:
             ../patches/0001-mediatek-add-TOTOLINK-X30-support.patch \
             ../patches/0002-mediatek-filogic-add-totolink-x30-fit-upgrade.patch \
             ../.github/workflows/build-x30-25.12.yml \
+            ../tests/test-x30-fit-upgrade.sh \
             | sha256sum | cut -c1-12)"
 
           echo "upstream_sha=${UPSTREAM_SHA}" >> "$GITHUB_OUTPUT"
@@ -230,8 +248,11 @@ jobs:
              grep -q "totolink,x30" target/linux/mediatek/filogic/base-files/lib/upgrade/platform.sh; then
             echo "X30 FIT sysupgrade handler already exists; not applying local platform patch."
           else
+            git apply --check "../patches/0002-mediatek-filogic-add-totolink-x30-fit-upgrade.patch"
             git apply "../patches/0002-mediatek-filogic-add-totolink-x30-fit-upgrade.patch"
           fi
+
+          sh ../tests/test-x30-fit-upgrade.sh "$PWD"
 
           echo "Verifying X30 image profile"
           grep -n "Device/totolink_X30" target/linux/mediatek/image/filogic.mk
@@ -251,7 +272,7 @@ jobs:
           echo "tag=${TAG}" >> "$GITHUB_OUTPUT"
           echo "patch_id=${PATCH_ID}" >> "$GITHUB_OUTPUT"
 
-          if git -C "$GITHUB_WORKSPACE" ls-remote --exit-code --tags origin "refs/tags/${TAG}" >/dev/null 2>&1; then
+          if [ "$GITHUB_EVENT_NAME" != "pull_request" ] && git -C "$GITHUB_WORKSPACE" ls-remote --exit-code --tags origin "refs/tags/${TAG}" >/dev/null 2>&1; then
             echo "Release tag ${TAG} already exists. Nothing new to build."
             echo "skip_build=true" >> "$GITHUB_OUTPUT"
           else
@@ -416,42 +437,61 @@ jobs:
 
       - name: Upload diagnostics on failure
         if: failure()
-        uses: actions/upload-artifact@v7
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7
         with:
           name: failed-build-diagnostics
           path: |
             build.log
             build-single.log
             x30-artifact-list.txt
+            openwrt/target/linux/mediatek/filogic/base-files/lib/upgrade/platform.sh
+            openwrt/.git/rebase-apply/patch
             openwrt/.config
             openwrt/tmp/.config*
             openwrt/logs/**
             openwrt/bin/targets/mediatek/filogic/**
           if-no-files-found: ignore
+          include-hidden-files: true
 
       - name: Upload workflow artifact
         if: steps.prep.outputs.skip_build != 'true'
-        uses: actions/upload-artifact@v7
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7
         with:
           name: openwrt-totolink-x30-${{ steps.openwrt_release.outputs.openwrt_version }}
           path: out/*
           if-no-files-found: error
 
+  publish:
+    needs: build
+    if: github.ref == 'refs/heads/main' && github.event_name != 'pull_request' && needs.build.outputs.skip_build != 'true'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    permissions:
+      contents: write
+    steps:
+      - name: Download verified firmware
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8
+        with:
+          name: openwrt-totolink-x30-${{ needs.build.outputs.openwrt_version }}
+          path: out
+
       - name: Create GitHub release
-        if: steps.prep.outputs.skip_build != 'true'
         env:
           GH_TOKEN: ${{ github.token }}
-          TAG: ${{ steps.prep.outputs.tag }}
-          OPENWRT_REF: ${{ steps.openwrt_release.outputs.openwrt_ref }}
-          OPENWRT_VERSION: ${{ steps.openwrt_release.outputs.openwrt_version }}
-          UPSTREAM_SHA: ${{ steps.prep.outputs.upstream_sha }}
-          PATCH_ID: ${{ steps.prep.outputs.patch_id }}
-          CONFIG_HASH: ${{ steps.prep.outputs.config_hash }}
+          GH_REPO: ${{ github.repository }}
+          BUILDER_SHA: ${{ github.sha }}
+          TAG: ${{ needs.build.outputs.tag }}
+          OPENWRT_REF: ${{ needs.build.outputs.openwrt_ref }}
+          OPENWRT_VERSION: ${{ needs.build.outputs.openwrt_version }}
+          UPSTREAM_SHA: ${{ needs.build.outputs.upstream_sha }}
+          PATCH_ID: ${{ needs.build.outputs.patch_id }}
+          CONFIG_HASH: ${{ needs.build.outputs.config_hash }}
         shell: bash
         run: |
           set -euo pipefail
 
           gh release create "${TAG}" out/* \
+            --target "${BUILDER_SHA}" \
             --title "TOTOLINK X30 OpenWrt ${OPENWRT_VERSION} build ${TAG}" \
             --notes "Custom TOTOLINK X30 build from OpenWrt ${OPENWRT_REF}.
 

@@ -1,0 +1,55 @@
+name: Validate X30 patches
+
+on:
+  pull_request:
+    paths:
+      - "patches/**"
+      - "tests/**"
+      - ".github/workflows/**"
+  push:
+    branches: [main]
+    paths:
+      - "patches/**"
+      - "tests/**"
+      - ".github/workflows/**"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: validate-x30-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  validate:
+    name: Patch compatibility (${{ matrix.openwrt_ref }})
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    strategy:
+      fail-fast: false
+      matrix:
+        openwrt_ref: [v25.12.5, v25.12.6]
+    steps:
+      - name: Checkout builder
+        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+        with:
+          persist-credentials: false
+
+      - name: Clone release and apply the complete patch series
+        env:
+          OPENWRT_REF: ${{ matrix.openwrt_ref }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          git clone --branch "$OPENWRT_REF" --single-branch \
+            https://github.com/openwrt/openwrt.git openwrt
+          cd openwrt
+          git config user.name x30-builder
+          git config user.email x30-builder@example.invalid
+          git am --3way ../patches/0001-mediatek-add-TOTOLINK-X30-support.patch
+          git apply --check ../patches/0002-mediatek-filogic-add-totolink-x30-fit-upgrade.patch
+          git apply ../patches/0002-mediatek-filogic-add-totolink-x30-fit-upgrade.patch
+
+      - name: Verify X30 FIT upgrade and image-check dispatch
+        run: sh tests/test-x30-fit-upgrade.sh "$PWD/openwrt"

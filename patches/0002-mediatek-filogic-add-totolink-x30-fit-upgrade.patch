@@ -1,22 +1,27 @@
 diff --git a/target/linux/mediatek/filogic/base-files/lib/upgrade/platform.sh b/target/linux/mediatek/filogic/base-files/lib/upgrade/platform.sh
-index 5681ae35f1..1111111111 100644
+index f7cbd40a65e4e5205bd2b6868eb828e4ec4a8c91..89c914da02e418dc4f9e2b871841c13dab81d8ad 100644
 --- a/target/linux/mediatek/filogic/base-files/lib/upgrade/platform.sh
 +++ b/target/linux/mediatek/filogic/base-files/lib/upgrade/platform.sh
-@@ -104,6 +104,8 @@ platform_do_upgrade() {
- 	tplink,tl-xdr6086|\
- 	tplink,tl-xdr6088|\
- 	tplink,tl-xtr8488|\
+@@ -110,6 +110,10 @@
+ 	local board=$(board_name)
+ 
+ 	case "$board" in
 +	totolink,X30|\
-+	totolink,x30|\
- 	xiaomi,mi-router-ax3000t-ubootmod|\
- 	xiaomi,redmi-router-ax6000-ubootmod|\
- 	xiaomi,mi-router-wr30u-ubootmod|\
-@@ -258,6 +260,8 @@ platform_check_image() {
- 	tplink,tl-xdr6086|\
- 	tplink,tl-xdr6088|\
- 	tplink,tl-xtr8488|\
++	totolink,x30)
++		fit_do_upgrade "$1"
++		;;
+ 	abt,asr3000|\
+ 	acer,predator-w6x-ubootmod|\
+ 	asus,zenwifi-bt8-ubootmod|\
+@@ -352,6 +356,11 @@
+ 	[ "$#" -gt 1 ] && return 1
+ 
+ 	case "$board" in
 +	totolink,X30|\
-+	totolink,x30|\
- 	xiaomi,mi-router-ax3000t-ubootmod|\
- 	xiaomi,redmi-router-ax6000-ubootmod|\
- 	xiaomi,mi-router-wr30u-ubootmod|\
++	totolink,x30)
++		fit_check_image "$1"
++		return $?
++		;;
+ 	abt,asr3000|\
+ 	acer,predator-w6x-ubootmod|\
+ 	asus,zenwifi-bt8-ubootmod|\

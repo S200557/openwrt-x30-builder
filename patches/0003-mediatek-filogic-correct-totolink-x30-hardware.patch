@@ -1,0 +1,171 @@
+Subject: [PATCH] mediatek: filogic: correct verified TOTOLINK X30 hardware
+
+Backport the hardware corrections prepared for the upstream X30 draft to
+the existing stable profile. Preserve stable LED names, device identifiers,
+flash layout and the existing bootloader artifacts. GPIO 34 is the 2.4 GHz
+indicator and GPIO 35 is the 5 GHz indicator, confirmed by isolated physical
+tests. Let mt76 read distinct radio addresses from EEPROM rather than
+overriding both with the same MAC. Remove USB hardware that is not present,
+and correct the label MAC source. Keep the stable WAN pin configuration.
+
+Based on sing's original X30 support in openwrt/openwrt#21061.
+Prepared for review by Sami Ibrahim <sami.j20@gmail.com>.
+Assisted-by: OpenAI Codex
+
+---
+diff --git a/target/linux/mediatek/dts/mt7981b-totolink-X30.dts b/target/linux/mediatek/dts/mt7981b-totolink-X30.dts
+--- a/target/linux/mediatek/dts/mt7981b-totolink-X30.dts
++++ b/target/linux/mediatek/dts/mt7981b-totolink-X30.dts
+@@ -3,6 +3,7 @@
+ /dts-v1/;
+ #include <dt-bindings/gpio/gpio.h>
+ #include <dt-bindings/input/input.h>
++#include <dt-bindings/leds/common.h>
+ #include "mt7981b.dtsi"
+ 
+ / {
+@@ -10,7 +11,6 @@
+ 	compatible = "totolink,x30", "mediatek,mt7981";
+ 
+ 	aliases {
+-		label-mac-device = &gmac0;
+ 		led-boot = &led_cpu;
+ 		led-failsafe = &led_cpu;
+ 		led-running = &led_cpu;
+@@ -35,47 +35,39 @@
+ 			label = "cpu";
+ 			function = LED_FUNCTION_CPU;
+ 			color = <LED_COLOR_ID_BLUE>;
+-            gpios = <&pio 15 GPIO_ACTIVE_LOW>;
++			gpios = <&pio 15 GPIO_ACTIVE_LOW>;
+ 			default-state = "on";
+-        };
+-
+-        wlan2g {
++		};
++
++		wlan2g {
+ 			label = "wlan2g";
+ 			function = LED_FUNCTION_WLAN_2GHZ;
+-            color = <LED_COLOR_ID_BLUE>;
+-            gpios = <&pio 35 GPIO_ACTIVE_LOW>;
++			color = <LED_COLOR_ID_BLUE>;
++			gpios = <&pio 34 GPIO_ACTIVE_LOW>;
+ 			linux,default-trigger = "phy0tpt";
+-        };
+-
+-        wlan5g {
++		};
++
++		wlan5g {
+ 			label = "wlan5g";
+ 			function = LED_FUNCTION_WLAN_5GHZ;
+-            color = <LED_COLOR_ID_BLUE>;
+-            gpios = <&pio 34 GPIO_ACTIVE_LOW>;
++			color = <LED_COLOR_ID_BLUE>;
++			gpios = <&pio 35 GPIO_ACTIVE_LOW>;
+ 			linux,default-trigger = "phy1tpt";
+-        };
+-
+-        usb {
+-			label = "usb";
+-			function = LED_FUNCTION_USB;
+-            color = <LED_COLOR_ID_BLUE>;
+-            gpios = <&pio 5 GPIO_ACTIVE_LOW>;
+-			linux,default-trigger = "usbdev";
+-        };
+-
+-        mesh_blue {
++		};
++
++		mesh_blue {
+ 			label = "mesh_blue";
+-			function = "mesh_blue";
+-            color = <LED_COLOR_ID_BLUE>;
+-            gpios = <&pio 4 GPIO_ACTIVE_LOW>;
+-        };
+-
+-        mesh_red {
++			function = "mesh";
++			color = <LED_COLOR_ID_BLUE>;
++			gpios = <&pio 4 GPIO_ACTIVE_LOW>;
++		};
++
++		mesh_red {
+ 			label = "mesh_red";
+-			function = "mesh_red";
+-            color = <LED_COLOR_ID_RED>;
+-            gpios = <&pio 12 GPIO_ACTIVE_HIGH>;
+-        };
++			function = "mesh";
++			color = <LED_COLOR_ID_RED>;
++			gpios = <&pio 12 GPIO_ACTIVE_HIGH>;
++		};
+ 	};
+ 
+ 	keys {
+@@ -203,8 +195,6 @@
+ 	pinctrl-0 = <&nand_pins>;
+ 
+ 	spi_nand@0 {
+-		#address-cells = <1>;
+-		#size-cells = <1>;
+ 		compatible = "spi-nand";
+ 		reg = <0>;
+ 
+@@ -276,28 +266,8 @@
+ 	};
+ };
+ 
+-&usb_phy {
+-	status = "okay";
+-};
+-
+-&xhci {
+-	status = "okay";
+-};
+-
+ &wifi {
+ 	status = "okay";
++	nvmem-cells = <&eeprom_factory_0>;
+ 	nvmem-cell-names = "eeprom";
+-	nvmem-cells = <&eeprom_factory_0>;
+-
+-	band@0 {
+-		reg = <0>;
+-		nvmem-cells = <&macaddr_factory_4 0>;
+-		nvmem-cell-names = "mac-address";
+-	};
+-
+-	band@1 {
+-		reg = <1>;
+-		nvmem-cells = <&macaddr_factory_4 0>;
+-		nvmem-cell-names = "mac-address";
+-	};
+-};
++};
+diff --git a/target/linux/mediatek/filogic/base-files/etc/board.d/02_network b/target/linux/mediatek/filogic/base-files/etc/board.d/02_network
+--- a/target/linux/mediatek/filogic/base-files/etc/board.d/02_network
++++ b/target/linux/mediatek/filogic/base-files/etc/board.d/02_network
+@@ -316,6 +316,9 @@
+ 		lan_mac=$label_mac
+ 		wan_mac=$(macaddr_add "$lan_mac" 1)
+ 		;;
++	totolink,x30)
++		label_mac=$(mtd_get_mac_binary "factory" 0x4)
++		;;
+ 	mercusys,mr90x-v1|\
+ 	tplink,archer-ax80-v1|\
+ 	tplink,archer-ax80-v1-eu|\
+diff --git a/target/linux/mediatek/image/filogic.mk b/target/linux/mediatek/image/filogic.mk
+--- a/target/linux/mediatek/image/filogic.mk
++++ b/target/linux/mediatek/image/filogic.mk
+@@ -3190,7 +3190,7 @@
+   BLOCKSIZE := 128k
+   PAGESIZE := 2048
+   UBOOTENV_IN_UBI := 1
+-  IMAGES := factory.bin sysupgrade.bin
++  IMAGES := sysupgrade.bin
+   KERNEL_INITRAMFS_SUFFIX := -recovery.bin
+   KERNEL := kernel-bin | gzip
+   KERNEL_INITRAMFS := kernel-bin | lzma | \

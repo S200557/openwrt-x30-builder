@@ -109,28 +109,10 @@ index 112b1deced..9ceba1fd62 100644
    DEVICE_MODEL := X6000R
 diff --git a/package/boot/uboot-mediatek/patches/505-add-totolink-x30.patch b/package/boot/uboot-mediatek/patches/505-add-totolink-x30.patch
 new file mode 100644
-index 0000000000..6ca8188414
+index 0000000000..b5f1eaa449
 --- /dev/null
 +++ b/package/boot/uboot-mediatek/patches/505-add-totolink-x30.patch
-@@ -0,0 +1,360 @@
-+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
-+From: sing <wx9745@gmail.com>
-+Date: Sat, 6 Dec 2025 11:51:27 +0800
-+Subject: [PATCH] board: mediatek: add TOTOLINK X30
-+
-+Add the X30 bootloader device tree, configuration and default environment.
-+
-+Based on the original board implementation in OpenWrt PR #21061:
-+https://github.com/openwrt/openwrt/pull/21061
-+
-+This draft revision normalizes device paths to lowercase, corrects the
-+physically verified Wi-Fi indicator pins and removes the nonexistent USB
-+indicator. Revision preparation: Sami Ibrahim <sami.j20@gmail.com>.
-+The revision's additional DCO sign-off is pending final human review.
-+
-+Signed-off-by: sing <wx9745@gmail.com>
-+Assisted-by: OpenAI Codex
-+---
+@@ -0,0 +1,345 @@
 +--- /dev/null
 ++++ b/arch/arm/dts/mt7981_totolink_x30.dts
 +@@ -0,0 +1,170 @@
@@ -306,7 +288,7 @@ index 0000000000..6ca8188414
 ++};
 +--- /dev/null
 ++++ b/configs/mt7981_totolink_x30_defconfig
-+@@ -0,0 +1,108 @@
++@@ -0,0 +1,109 @@
 ++CONFIG_ARM=y
 ++CONFIG_SYS_HAS_NONCACHED_MEMORY=y
 ++CONFIG_POSITION_INDEPENDENT=y
@@ -333,6 +315,7 @@ index 0000000000..6ca8188414
 ++# CONFIG_BOARD_INIT is not set
 ++CONFIG_BOARD_LATE_INIT=y
 ++CONFIG_HUSH_PARSER=y
+++CONFIG_USE_PREBOOT=y
 ++CONFIG_SYS_PROMPT="MT7981> "
 ++CONFIG_CMD_CPU=y
 ++CONFIG_CMD_LICENSE=y
@@ -417,7 +400,7 @@ index 0000000000..6ca8188414
 ++CONFIG_HEXDUMP=y
 +--- /dev/null
 ++++ b/defenvs/totolink_x30_env
-+@@ -0,0 +1,55 @@
++@@ -0,0 +1,57 @@
 ++ipaddr=192.168.1.1
 ++serverip=192.168.1.254
 ++loadaddr=0x46000000
@@ -425,6 +408,7 @@ index 0000000000..6ca8188414
 ++bootargs=root=/dev/fit0 rootwait
 ++bootcmd=if pstore check ; then run boot_recovery ; else run boot_ubi ; fi
 ++bootconf=config-1
+++preboot=run boot_reset
 ++bootdelay=0
 ++bootfile=openwrt-mediatek-filogic-totolink_x30-initramfs-recovery.bin
 ++bootfile_bl2=openwrt-mediatek-filogic-totolink_x30-preloader.bin
@@ -447,12 +431,13 @@ index 0000000000..6ca8188414
 ++bootmenu_7=[31mLoad BL2 preloader via TFTP then write to NAND.[0m=run boot_tftp_write_bl2 ; run bootmenu_confirm_return
 ++bootmenu_8=Reboot.=reset
 ++bootmenu_9=Reset all settings to factory defaults.=run reset_factory ; reset
-++boot_first=if button reset ; then led $bootled_rec on ; run boot_tftp_recovery ; setenv flag_recover 1 ; run boot_default ; fi ; bootmenu
+++boot_first=bootmenu
+++boot_reset=if button reset ; then run boot_tftp_forever ; fi
 ++boot_default=if env exists flag_recover ; then else run bootcmd ; fi ; run boot_recovery ; setenv replacevol 1 ; run boot_tftp_forever
 ++boot_production=led $bootled_pwr on ; run ubi_read_production && bootm $loadaddr#$bootconf ; led $bootled_pwr off
 ++boot_recovery=led $bootled_rec on ; run ubi_read_recovery && bootm $loadaddr#$bootconf ; led $bootled_rec off
 ++boot_ubi=run boot_production ; run boot_recovery ; run boot_tftp_forever
-++boot_tftp_forever=led $bootled_rec on ; while true ; do run boot_tftp_recovery ; sleep 1 ; done
+++boot_tftp_forever=led $bootled_rec on ; while true ; do run boot_tftp ; sleep 1 ; done
 ++boot_tftp_production=tftpboot $loadaddr $bootfile_upg && env exists replacevol && iminfo $loadaddr && run ubi_write_production ; if env exists noboot ; then else bootm $loadaddr#$bootconf ; fi
 ++boot_tftp_recovery=tftpboot $loadaddr $bootfile && env exists replacevol && iminfo $loadaddr && run ubi_write_recovery ; if env exists noboot ; then else bootm $loadaddr#$bootconf ; fi
 ++boot_tftp=tftpboot $loadaddr $bootfile && bootm $loadaddr#$bootconf

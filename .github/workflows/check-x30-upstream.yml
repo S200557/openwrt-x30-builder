@@ -1,0 +1,203 @@
+name: Validate X30 upstream contribution draft
+
+on:
+  workflow_dispatch:
+  pull_request:
+    paths:
+      - "upstream/totolink-x30/**"
+      - "tests/test-x30-upstream.sh"
+      - "tests/test-x30-bootloader.py"
+      - "tests/x30-bootloader-stubs.c"
+      - "tests/test-x30-fit-upgrade.sh"
+      - ".github/workflows/check-x30-upstream.yml"
+
+permissions:
+  contents: read
+
+concurrency:
+  group: x30-upstream-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
+env:
+  OPENWRT_COMMIT: a25fb079b1463cd5d7d69c6d9a1c28d873291ebb
+  OPENWRT_KERNEL: 6.18.55
+  BUILD_JOBS: 2
+
+jobs:
+  build:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 360
+    steps:
+      - name: Check out contribution draft
+        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+        with:
+          persist-credentials: false
+
+      - name: Install build dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            build-essential clang flex bison gawk gcc-multilib g++-multilib \
+            gettext git libncurses-dev libssl-dev libelf-dev python3 python3-dev pkg-config \
+            python3-pyelftools python3-setuptools rsync swig unzip \
+            zlib1g-dev file wget curl time jq quilt device-tree-compiler
+
+      - name: Free unused hosted-runner SDK space
+        run: |
+          sudo rm -rf -- /usr/share/dotnet /opt/ghc /usr/local/lib/android /opt/hostedtoolcache/CodeQL
+          df -h
+
+      - name: Prepare pinned OpenWrt source and apply draft
+        shell: bash
+        run: |
+          set -euo pipefail
+          git init openwrt
+          git -C openwrt remote add origin https://github.com/openwrt/openwrt.git
+          git -C openwrt fetch --depth=1 origin "$OPENWRT_COMMIT"
+          git -C openwrt checkout --detach FETCH_HEAD
+          test "$(git -C openwrt rev-parse HEAD)" = "$OPENWRT_COMMIT"
+          git -C openwrt apply --check ../upstream/totolink-x30/openwrt-main.patch
+          git -C openwrt apply ../upstream/totolink-x30/openwrt-main.patch
+          sh tests/test-x30-upstream.sh "$PWD/openwrt"
+
+      - name: Configure minimal device validation image
+        working-directory: openwrt
+        shell: bash
+        run: |
+          set -euo pipefail
+          # The standard base image and device artifacts use core packages.
+          # Exclude optional feeds so this check depends on the pinned tree.
+          : > feeds.conf
+          cat > .config <<'EOF'
+          CONFIG_TARGET_mediatek=y
+          CONFIG_TARGET_mediatek_filogic=y
+          CONFIG_TARGET_mediatek_filogic_DEVICE_totolink_x30=y
+          CONFIG_TARGET_ROOTFS_SQUASHFS=y
+          CONFIG_TARGET_ROOTFS_INITRAMFS=y
+          CONFIG_PACKAGE_u-boot-mt7981_totolink_x30=y
+          EOF
+          make defconfig
+          grep -Fx 'CONFIG_TARGET_mediatek_filogic_DEVICE_totolink_x30=y' .config
+          grep -Fx 'CONFIG_PACKAGE_u-boot-mt7981_totolink_x30=y' .config
+          grep -Fx 'CONFIG_TARGET_ROOTFS_INITRAMFS=y' .config
+          cp .config ../upstream-validation.config
+
+      - name: Download checksummed build sources
+        working-directory: openwrt
+        run: make download -j8
+
+      - name: Test reset recovery without storage access
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 tests/test-x30-bootloader.py "$PWD/openwrt" \
+            --workdir "$RUNNER_TEMP/x30-uboot-recovery" 2>&1 | tee upstream-recovery-test.log
+
+      - name: Build firmware and bootloader artifacts
+        working-directory: openwrt
+        shell: bash
+        run: |
+          set -euo pipefail
+          make -j"$BUILD_JOBS" V=s 2>&1 | tee ../upstream-build.log
+
+      - name: Verify sysupgrade and RAM images and record provenance
+        shell: bash
+        env:
+          BUILDER_HEAD: ${{ github.event.pull_request.head.sha || github.sha }}
+        run: |
+          set -euo pipefail
+          uboot_config=$(find openwrt/build_dir -type f -path '*/u-boot-mt7981_totolink_x30/u-boot-*/.config' -print)
+          test -n "$uboot_config"
+          test "$(printf '%s\n' "$uboot_config" | wc -l)" -eq 1
+          grep -Fx 'CONFIG_USE_PREBOOT=y' "$uboot_config"
+          output=openwrt/bin/targets/mediatek/filogic
+          image=$(find "$output" -maxdepth 1 -name '*totolink_x30-squashfs-sysupgrade.bin' -print)
+          test -n "$image" && test -s "$image"
+          test "$(printf '%s\n' "$image" | wc -l)" -eq 1
+          recovery=$(find "$output" -maxdepth 1 -name '*totolink_x30-initramfs-recovery.bin' -print)
+          test -n "$recovery" && test -s "$recovery"
+          test "$(printf '%s\n' "$recovery" | wc -l)" -eq 1
+          fip=$(find "$output" -maxdepth 1 -name '*totolink_x30-bl31-uboot.fip' -print)
+          preloader=$(find "$output" -maxdepth 1 -name '*totolink_x30-preloader.bin' -print)
+          test -n "$fip" && test -s "$fip"
+          test -n "$preloader" && test -s "$preloader"
+          (cd "$output" && sha256sum --check --ignore-missing sha256sums)
+          openwrt/staging_dir/host/bin/fwtool -q -i image-metadata.json "$image"
+          jq -e '.supported_devices | index("totolink,x30") != null and index("totolink,X30") != null' image-metadata.json
+          jq -e --arg commit "$OPENWRT_COMMIT" --arg kernel "$OPENWRT_KERNEL" '
+            .target == "mediatek/filogic" and .git_commit == $commit and
+            .linux_kernel.version == $kernel and
+            (.profiles.totolink_x30.supported_devices |
+              index("totolink,x30") != null and index("totolink,X30") != null)
+          ' "$output/profiles.json" > /dev/null
+          for candidate in "$image" "$recovery"; do
+            digest=$(sha256sum "$candidate" | cut -d' ' -f1)
+            jq -e --arg name "${candidate##*/}" --arg digest "$digest" '
+              [.profiles.totolink_x30.images[] |
+                select(.name == $name and .sha256 == $digest)] | length == 1
+            ' "$output/profiles.json" > /dev/null
+          done
+          manifest=$(find "$output" -maxdepth 1 -name '*totolink_x30.manifest' -print)
+          test -n "$manifest" && test -s "$manifest"
+          test "$(printf '%s\n' "$manifest" | wc -l)" -eq 1
+          mkdir validation-results
+          cp "$image" "$recovery" "$manifest" "$output/profiles.json" "$output/sha256sums" image-metadata.json validation-results/
+          for metadata in config.buildinfo version.buildinfo; do
+            test -s "$output/$metadata"
+            cp "$output/$metadata" validation-results/
+          done
+          # The core-only build has no feed revisions, so this file may be empty.
+          test -f "$output/feeds.buildinfo"
+          cp "$output/feeds.buildinfo" validation-results/
+          jq -n \
+            --arg builder_repository "$GITHUB_REPOSITORY" \
+            --arg builder_head "$BUILDER_HEAD" \
+            --arg checkout_commit "$(git rev-parse HEAD)" \
+            --arg run_url "$GITHUB_SERVER_URL/$GITHUB_REPOSITORY/actions/runs/$GITHUB_RUN_ID" \
+            --arg openwrt_commit "$(git -C openwrt rev-parse HEAD)" \
+            --arg kernel "$OPENWRT_KERNEL" \
+            --arg patch_sha256 "$(sha256sum upstream/totolink-x30/openwrt-main.patch | cut -d' ' -f1)" \
+            --arg config_sha256 "$(sha256sum upstream-validation.config | cut -d' ' -f1)" \
+            --arg sysupgrade_image "${image##*/}" \
+            --arg recovery_image "${recovery##*/}" \
+            '{
+              purpose: "Upstream review and RAM validation; no automatic deployment",
+              builder_repository: $builder_repository,
+              builder_head: $builder_head,
+              checkout_commit: $checkout_commit,
+              run_url: $run_url,
+              openwrt_commit: $openwrt_commit,
+              kernel: $kernel,
+              patch_sha256: $patch_sha256,
+              config_sha256: $config_sha256,
+              sysupgrade_image: $sysupgrade_image,
+              recovery_image: $recovery_image
+            }' > validation-results/build-provenance.json
+          {
+            echo "Purpose: upstream review and validation; no automatic deployment"
+            echo "OpenWrt source: $OPENWRT_COMMIT"
+            echo "Contribution commit: $(git rev-parse HEAD)"
+            sha256sum upstream/totolink-x30/openwrt-main.patch upstream-validation.config
+            sha256sum "$image" "$recovery"
+          } > validation-results/provenance.txt
+          (cd validation-results && sha256sum -- * > BUILD-SHA256SUMS.txt)
+
+      - name: Retain sysupgrade and RAM images and provenance
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7
+        with:
+          name: x30-upstream-validation-${{ github.run_id }}
+          path: validation-results/
+          if-no-files-found: error
+          retention-days: 14
+
+      - name: Retain build log and generated configuration
+        if: always()
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7
+        with:
+          name: x30-upstream-build-log-${{ github.run_id }}
+          path: |
+            upstream-build.log
+            upstream-validation.config
+            upstream-recovery-test.log
+          if-no-files-found: ignore
+          retention-days: 14
